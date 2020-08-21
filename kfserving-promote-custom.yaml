@@ -1,0 +1,23 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: kfserving-promote-inferenceservice
+spec:
+  params:
+    - name: service_name
+      description: The name of the inferenceservice to create
+      type: string
+      default: "model-inf"
+    - name: service_namespace
+      description: The namespace of the inferenceservice to create
+      type: string
+      default: "default"
+  steps:
+    - name: deploy-inference-server
+      image: iancoffey/kfserving-sdk:latest
+      script: |
+        #!/usr/local/bin/python
+        from kfserving import KFServingClient
+        KFServing = KFServingClient()
+        KFServing.promote("$(params.service_name)", namespace="$(params.service_namespace)", watch=True, timeout_seconds=120)
+        print("Sucessfully promoted canary $(params.service_name)")

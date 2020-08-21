@@ -1,0 +1,85 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: kfserving-custom-inferenceservice
+spec:
+  params:
+    - name: canary_container_name
+      description: Name of the container to launch
+      type: string
+    - name: canary_container_image
+      description: The containers image
+      type: string
+    - name: canary_container_port
+      description: Port to launch on
+      type: string
+      default: "5000"
+    - name: main_container_name
+      description: Name of the container to launch
+      type: string
+    - name: main_container_image
+      description: The containers image
+      type: string
+    - name: main_container_port
+      description: Port to launch on
+      type: string
+      default: "5000"
+    - name: service_name
+      description: The name of the inferenceservice to create
+      type: string
+      default: "model-inf"
+    - name: service_namespace
+      description: The namespace of the inferenceservice to create
+      type: string
+      default: "default"
+  steps:
+    - name: deploy-inference-server
+      image: iancoffey/kfserving-sdk:latest
+      script: |
+        #!/usr/local/bin/python
+        from kfserving import V1alpha2EndpointSpec,V1alpha2InferenceServiceSpec, V1alpha2InferenceService, V1alpha2CustomSpec
+        from kfserving import KFServingClient
+        from kfserving import constants
+        from kfserving import V1alpha2PredictorSpec
+        from kubernetes import client as k8s_client
+
+        canarySpec = k8s_client.V1Container(
+            name="$(params.canary_container_name)",
+            image="$(params.canary_container_image)",
+            ports=[k8s_client.V1ContainerPort(container_port=$(params.canary_container_port))]) # 5000
+
+        defaultSpec = k8s_client.V1Container(
+            name="$(params.main_container_name)",
+            image="$(params.main_container_image)",
+            ports=[k8s_client.V1ContainerPort(container_port=$(params.main_container_port))]) # 5000
+
+        # https://github.com/kubernetes-client/python/blob/master/kubernetes/docs/V1Container.md
+        default_custom_model_spec = V1alpha2EndpointSpec(
+            predictor=V1alpha2PredictorSpec(
+                custom=V1alpha2CustomSpec(
+                    container=defaultSpec
+                )
+            )
+        )
+        canary_custom_model_spec = V1alpha2EndpointSpec(
+            predictor=V1alpha2PredictorSpec(
+                custom=V1alpha2CustomSpec(
+                    container=canarySpec
+                )
+            )
+        )
+
+        metadata = k8s_client.V1ObjectMeta(
+            name="$(params.service_name)",
+            namespace="$(params.service_namespace)",
+            annotations={"prometheus.io/scape": "true", "prometheus.io/port": "9091"}
+        )
+
+        isvc = V1alpha2InferenceService(api_version=constants.KFSERVING_GROUP + '/' + constants.KFSERVING_VERSION,
+                                  kind=constants.KFSERVING_KIND,
+                                  metadata=metadata,
+                                  spec=V1alpha2InferenceServiceSpec(default=default_custom_model_spec, canary=canary_custom_model_spec,canary_traffic_percent=10))
+
+        KFServing = KFServingClient()
+        KFServing.create(isvc)
+        print("Sucessfully created service $(params.service_name)")
